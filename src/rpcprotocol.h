@@ -125,7 +125,7 @@ public:
 		}
 #endif
 		boost::system::error_code error = boost::asio::error::host_not_found;
-		tcp::resolver::iterator end
+		tcp::resolver::iterator end;
 		while (error && endpoint_iterator != end)
 		{
 			stream.lowest_layer().close();

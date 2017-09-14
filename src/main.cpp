@@ -2288,7 +2288,7 @@ static CBlockIndex* FindMostWorkChain()
 static bool ActivateBestChainStep(CValidationState &state, CBlockIndex *pindexMostWork) {
 	AssertLockHeld(cs_main);
 	CBlockIndex *pindexOldTip = chainActive.Tip();
-	CBlockIndex *pindexFor = chainActive.FindFork(pindexMostWork);
+	CBlockIndex *pindexFork = chainActive.FindFork(pindexMostWork);
 	// Disconnect active blocks which are no longer in the best chain.
 	while (chainActive.Tip() && chainActive.Tip() != pindexFork) {
 		if (!DisconnectTip(state))
