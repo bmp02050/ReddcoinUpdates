@@ -2330,7 +2330,7 @@ static bool ActivateBestChainStep(CValidationState &state, CBlockIndex *pindexMo
 }
 
 bool ActivateBestChain(CValidationState &state, Cblock *pblock)
-{//stopped here
+{//stopped here thanks
 	CBlockIndex *pindex
 	do
 	{
