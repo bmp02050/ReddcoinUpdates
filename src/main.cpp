@@ -2964,17 +2964,24 @@ void PushGetBlocks(CNode* pnode, CBlockIndex* pindexBegin, uint256 hashEnd)
 bool ProcessBlock(CValidationState &state, CNode* pfrom, CBlock* pblock, CDiskBlockPos *dbp)
 {
 	AssertLockHeld(cs_main);
-	//Stopped here
+	
+	//Prelim checks
+	bool checked = CheckBlock(*pblock,state);
+
+	LOCK(cs_main);
+	MarkBlockAsReceived(pblock->GetHash());
+	if (!checked)
+	{
+		return error("ProcessBlock() : CheckBlock FAILED");		
+	}
+
 	// PoSV: check proof-of-stake
 	// Limited duplicity on stake: prevents block flood attack
 	// Duplicate stake allowed only when there is orphan child block
 	if (pblock->IsProofOfStake() && setStakeSeen.count(pblock->GetProofOfStake()) && !mapOrphanBlocksByPrev.count(hash))
 		return error("ProcessBlock() : duplicate proof-of-stake (%s, %d) for block %s", pblock->GetProofOfStake().first.ToString().c_str(), pblock->GetProofOfStake().second, hash.ToString().c_str());
 
-	// Preliminary checks
-	if (!CheckBlock(*pblock, state))
-		return error("ProcessBlock() : CheckBlock FAILED");
-
+	
 	CBlockIndex* pcheckpoint = Checkpoints::GetLastCheckpoint(mapBlockIndex);
 	if (pcheckpoint && pblock->hashPrevBlock != (chainActive.Tip() ? chainActive.Tip()->GetBlockHash() : uint256(0)))
 	{
