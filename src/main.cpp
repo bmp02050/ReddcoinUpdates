@@ -2269,7 +2269,7 @@ static bool ActivateBestChainStep(CValidationState &state, CBlockIndex *pindexMo
 		int nTargetHeight = std::min(nHeight + 32, pindexMostWork->nHeight);
 		vpindexToConnect.clear();
 		vpindexToConnect.reserve(nTargetHeight - nHeight);
-		CBlockIndex *pindexIter = pindexMostWork->GetAncestors(nTargetHeight);
+		CBlockIndex *pindexIter = pindexMostWork->GetAncestor(nTargetHeight);
 		while (pindexIter && pindexIter->nHeight != nHeight)
 		{
 			vpindexToConnect.push_back(pindexIter);
@@ -2818,100 +2818,37 @@ bool AcceptBlock(CBlock& block, CValidationState& state, CDiskBlockPos* dbp)
 
 	// Check that all transactions are finalized
 	BOOST_FOREACH(const CTransaction& tx, block.vtx)
-		if (!IsFinalTx(tx, nHeight, block.GetBlockTime()))
+	{	if (!IsFinalTx(tx, nHeight, block.GetBlockTime()))
 		{
 			pindex0>nStatus |= BLOCK_FAILED_VALID;
 			return state.DoS(10, error("AcceptBlock() : contains a non-final transaction"),
 				REJECT_INVALID, "bad-txns-nonfinal");
 		}
+	}
 
-	//Stopped Here
-/*
-	// Check for duplicate
-	uint256 hash = block.GetHash();
-	if (mapBlockIndex.count(hash))
-		return state.Invalid(error("AcceptBlock() : block already in mapBlockIndex"), 0, "duplicate");
-
-	// Get prev block index
-	CBlockIndex* pindexPrev = NULL;
-	int nHeight = 0;
-	uint256 hashProof = 0;
-
-	if (hash != Params().HashGenesisBlock()) {
-		map<uint256, CBlockIndex*>::iterator mi = mapBlockIndex.find(block.hashPrevBlock);
-		if (mi == mapBlockIndex.end())
-			return state.DoS(10, error("AcceptBlock() : prev block not found"), 0, "bad-prevblk");
-		pindexPrev = (*mi).second;
-		nHeight = pindexPrev->nHeight + 1;
-
-		if (block.IsProofOfWork() && nHeight > Params().LastProofOfWorkHeight())
-			return state.DoS(100, error("AcceptBlock() : reject proof-of-work at height %d", nHeight));
-
-		// Check proof of work
-		if (block.nBits != GetNextWorkRequired(pindexPrev, &block))
-			return state.DoS(100, error("AcceptBlock() : incorrect proof of work"),
-				REJECT_INVALID, "bad-diffbits");
-
-		// Check timestamp against prev
-		if (block.GetBlockTime() <= pindexPrev->GetMedianTimePast())
-			return state.Invalid(error("AcceptBlock() : block's timestamp is too early"),
-				REJECT_INVALID, "time-too-old");
-
-		// Check that all transactions are finalized
-		BOOST_FOREACH(const CTransaction& tx, block.vtx)
-			if (!IsFinalTx(tx, nHeight, block.GetBlockTime()))
-				return state.DoS(10, error("AcceptBlock() : contains a non-final transaction"),
-					REJECT_INVALID, "bad-txns-nonfinal");
-
-		// Check that the block chain matches the known block chain up to a checkpoint
-		if (!Checkpoints::CheckBlock(nHeight, hash))
-			return state.DoS(100, error("AcceptBlock() : rejected by checkpoint lock-in at %d", nHeight),
-				REJECT_CHECKPOINT, "checkpoint mismatch");
-
-		// Don't accept any forks from the main chain prior to last checkpoint
-		CBlockIndex* pcheckpoint = Checkpoints::GetLastCheckpoint(mapBlockIndex);
-		if (pcheckpoint && nHeight < pcheckpoint->nHeight)
-			return state.DoS(100, error("AcceptBlock() : forked chain older than last checkpoint (height %d)", nHeight));
-
-		// Reject block.nVersion=2 blocks when 95% (75% on testnet) of the network has upgraded:
-		// Should pass here as all PoSV blocks nVersion=3
-		if (block.nVersion < 3)
-		{
-			if ((!TestNet() && CBlockIndex::IsSuperMajority(3, pindexPrev, 9500, 10000)) ||
-				(TestNet() && CBlockIndex::IsSuperMajority(3, pindexPrev, 750, 1000)))
-			{
-				return state.Invalid(error("AcceptBlock() : rejected nVersion=2 block"),
-					REJECT_OBSOLETE, "bad-version");
-			}
+	//Write Block to history file
+	try
+	{
+		unsigned int nBlockSize = ::GetSerializeSize(block,SER_DISK,CLIENT_VERSION);
+		CDiskBlockPos blockPos;
+		if (dbp != NULL)
+			blockPos = *dbp;
+		if (!FindBlockPos(state,blockPos,nBlockSize+8,nHeight,block.GetBlockTime(),dbp != NULL))
+			return error("AcceptBlock() : FindBlockPos failed");
+		if (dbp == NULL)
+		{	
+			if (!WriteBlockToDisk(block,blockPos))
+				{
+					return state.Abort("Failed to write block");
+				}
 		}
-		// Reject block.nVersion=3 blocks when 85% (51% on testnet) of the network has upgraded:
-		if (block.nVersion < 4)
-		{
-			if ((!TestNet() && CBlockIndex::IsSuperMajority(4, pindexPrev, 6120, 7200)) ||
-				(TestNet() && CBlockIndex::IsSuperMajority(4, pindexPrev, 750, 1000)))
-			{
-				return state.Invalid(error("AcceptBlock() : rejected nVersion=3 block"),
-					REJECT_OBSOLETE, "bad-version");
-			}
-		}
-		// Enforce block.nVersion=2 rule that the coinbase starts with serialized block height
-		// Reddcoin did not enable this BIP 34
-		// TBD
-		/*
-		if (block.nVersion >= 3)
-		{
-			// if 750 of the last 1,000 blocks are version 2 or greater (51/100 if testnet):
-			if ((!TestNet() && CBlockIndex::IsSuperMajority(3, pindexPrev, 7500, 10000)) ||
-				(TestNet() && CBlockIndex::IsSuperMajority(3, pindexPrev, 510, 1000)))
-			{
-				CScript expect = CScript() << nHeight;
-				if (block.vtx[0].vin[0].scriptSig.size() < expect.size() ||
-					!std::equal(expect.begin(), expect.end(), block.vtx[0].vin[0].scriptSig.begin()))
-					return state.DoS(100, error("AcceptBlock() : block height mismatch in coinbase"),
-									 REJECT_INVALID, "bad-cb-height");
-			}
-		}
-		*/
+		if (!ReceivedBlockTransactions(block,state,pindex,blockPos))
+			return error("AcceptBlock() : ReceivedBlockTransactions fialed");
+	} 
+	catch(std::runtime_error &e)
+	{
+		return state.Abort(st::string("System error: ") + e.what());
+	}
 
 		uint256 hashProof;
 		// Verify hash target and signature of coinstake tx
@@ -2928,42 +2865,14 @@ bool AcceptBlock(CBlock& block, CValidationState& state, CDiskBlockPos* dbp)
 		{
 			// PoW is checked in CheckBlock()
 			hashProof = block.GetPoWHash();
-		}
-	}
-
-	// Write block to history file
-	try {
-		unsigned int nBlockSize = ::GetSerializeSize(block, SER_DISK, CLIENT_VERSION);
-		CDiskBlockPos blockPos;
-		if (dbp != NULL)
-			blockPos = *dbp;
-		if (!FindBlockPos(state, blockPos, nBlockSize + 8, nHeight, block.nTime, dbp != NULL))
-			return error("AcceptBlock() : FindBlockPos failed");
-		if (dbp == NULL)
-			if (!WriteBlockToDisk(block, blockPos))
-				return state.Abort(_("Failed to write block"));
-		if (!AddToBlockIndex(block, state, blockPos, hashProof))
-			return error("AcceptBlock() : AddToBlockIndex failed");
-	}
-	catch (std::runtime_error &e) {
-		return state.Abort(_("System error: ") + e.what());
-	}
-
-	// Relay inventory, but don't relay old inventory during initial block download
-	int nBlockEstimate = Checkpoints::GetTotalBlocksEstimate();
-	if (chainActive.Tip()->GetBlockHash() == hash)
-	{
-		LOCK(cs_vNodes);
-		BOOST_FOREACH(CNode* pnode, vNodes)
-			if (chainActive.Height() > (pnode->nStartingHeight != -1 ? pnode->nStartingHeight - 2000 : nBlockEstimate))
-				pnode->PushInventory(CInv(MSG_BLOCK, hash));
-	}
+		}	
 
 	return true;
 }
 
-bool CBlockIndex::IsSuperMajority(int minVersion, const CBlockIndex* pstart, unsigned int nRequired, unsigned int nToCheck)
+bool CBlockIndex::IsSuperMajority(int minVersion, const CBlockIndex* pstart, unsigned int nRequired)
 {
+	unsigned int nToCheck = Params().ToCheckBlockUpgradeMajority();
 	unsigned int nFound = 0;
 	for (unsigned int i = 0; i < nToCheck && nFound < nRequired && pstart != NULL; i++)
 	{
@@ -2972,6 +2881,59 @@ bool CBlockIndex::IsSuperMajority(int minVersion, const CBlockIndex* pstart, uns
 		pstart = pstart->pprev;
 	}
 	return (nFound >= nRequired);
+}
+
+/** Turn the lowest '1' bit into the binary representation of a number into a '0'. */
+int static inline InvertLowestOne(int n) { return n & (n - 1);}
+
+/**Computer what height to jump back to with the CBlockIndex::pskip pointer.*/
+int state inline GetSkipHeight(int height)
+{ 
+	if (height < 2) 
+		return 0
+	//Deterimine which height to jump back to. Any number strictly lower than height is acceptable,
+	//but the following expression seems to perform well in simulations (max 110 steps to go back
+	//up to 2**18 blocks)
+	return (height & 1) ? InvertLowestOne(InvertLowestOne(height-1)) + 1 : InvertLowestOne(height);
+}
+
+CBlockIndex* CBlockIndex::GetAncestor(int height)
+{
+	if (height>nHeight || height< 0)
+		return NULL;
+
+	CBlockIndex* pindexWalk = this;
+	int heightWalk = nHeight;
+	while (heightWalk> height)
+	{
+		int heightSkip = GetSkipHeight(heightWalk);
+		int heightSkipPrev = GetSkipHeight(heightWalk - 1);
+		if (heightSkip == height ||
+			(heightSkip > height && !(heightSkipPrev < heightSkip -2 &&
+				heightSkipPrev >= height)))
+		{
+			pindexWalk = pindexWalk->pskip;
+			heightWalk = heightSkip;
+
+		}
+		else
+		{
+			pindexWalk = pindexWalk->pprev;
+			heightWalk--;
+		}
+	}
+	return pindexWalk;
+}
+
+const CBlockIndex* CBlockIndex::GetAncestor(int height) const
+{
+	return const_cast<CBlockIndex*>(this)->GetAncestor(height);
+}
+
+void CBlockIndex::BuildSkip()
+{
+	if (pprev)
+		pskip = pprev->GetAncestor(GetSkipHeight(nHeight));
 }
 
 int64_t CBlockIndex::GetMedianTime() const
@@ -3002,14 +2964,7 @@ void PushGetBlocks(CNode* pnode, CBlockIndex* pindexBegin, uint256 hashEnd)
 bool ProcessBlock(CValidationState &state, CNode* pfrom, CBlock* pblock, CDiskBlockPos *dbp)
 {
 	AssertLockHeld(cs_main);
-
-	// Check for duplicate
-	uint256 hash = pblock->GetHash();
-	if (mapBlockIndex.count(hash))
-		return state.Invalid(error("ProcessBlock() : already have block %d %s", mapBlockIndex[hash]->nHeight, hash.ToString()), 0, "duplicate");
-	if (mapOrphanBlocks.count(hash))
-		return state.Invalid(error("ProcessBlock() : already have block (orphan) %s", hash.ToString()), 0, "duplicate");
-
+	//Stopped here
 	// PoSV: check proof-of-stake
 	// Limited duplicity on stake: prevents block flood attack
 	// Duplicate stake allowed only when there is orphan child block
